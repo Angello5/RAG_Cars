@@ -10,6 +10,7 @@ from langchain_community.document_loaders import TextLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 import torch
+import re
 
 
 BASE = Path(__file__).resolve().parent
@@ -72,23 +73,82 @@ def ingest_all(pdf_list: List[Path], processed_root: Path) -> List[ParseResult]:
         results.append(r)
     return results
 
+
+def _guess_year(text: str) -> str:
+    m = re.search(r"\b(19\d{2}|20\d{2})\b", text)
+    return m.group(1) if m else ""
+
+
+def _guess_model_from_filename(filename_stem: str, make: str) -> str:
+    """Heurística simple para inferir modelo desde el nombre del archivo.
+    Ejemplos:
+      - CATALOGO_COROLLA_PERU -> Corolla
+      - Ficha-Tecnica-Amarok-2025 -> Amarok
+    """
+    stem = filename_stem.replace("-", "_")
+    tokens = [t for t in stem.split("_") if t]
+
+    # Palabras comunes que no son modelo
+    stop = {
+        "CATALOGO", "CATALOG", "FICHA", "TECNICA", "TÉCNICA",
+        "PERU", "PERÚ", "PDF", "AUTO", "AUTOS", "VEHICULO", "VEHÍCULO",
+        "NUEVO", "NUEVA", "MODELO", "VERSION", "VERSIÓN"
+    }
+
+    # También ignoramos el nombre de la marca si aparece en el archivo
+    make_up = make.upper()
+
+    candidates = []
+    for t in tokens:
+        up = t.upper()
+        if up in stop:
+            continue
+        if up == make_up:
+            continue
+        # descarta tokens muy cortos y años
+        if re.fullmatch(r"19\d{2}|20\d{2}", t):
+            continue
+        if len(t) < 3:
+            continue
+        candidates.append(t)
+
+    # Regla: el primer token "fuerte" suele ser el modelo
+    if candidates:
+        return candidates[0].title()
+
+    # fallback
+    return filename_stem.title()
+
+
+
 def load_md_documents(processed_root: Path):
     docs = []
     for md in processed_root.rglob("*.md"):
         loaded = TextLoader(str(md), encoding="utf-8").load()
 
-        # Derivar metadata útil desde la ruta: data/processed/<Make>/<Model>/archivo.md
+        # Estructura actual: data/processed/<Make>/<file>.md
         rel = md.relative_to(processed_root)
         parts = rel.parts
         make = parts[0] if len(parts) >= 1 else "unknown"
-        model = parts[1] if len(parts) >= 2 else "unknown"
+
+        # Modelo inferido del nombre del archivo (porque no hay carpeta /<Model>/)
+        model = _guess_model_from_filename(md.stem, make)
+        year = _guess_year(md.stem)
+
+        make_norm = make.strip().lower()
+        model_norm = model.strip().lower()
 
         for d in loaded:
             d.metadata = d.metadata or {}
             d.metadata["make"] = make
             d.metadata["model"] = model
+            if year:
+                d.metadata["year"] = year
+            d.metadata["make_norm"] = make_norm
+            d.metadata["model_norm"] = model_norm
             d.metadata["source_rel"] = str(rel)
         docs.extend(loaded)
+
     return docs
 
 def main():
