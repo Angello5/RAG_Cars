@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from docling.document_converter import DocumentConverter
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
 from langchain_community.document_loaders import TextLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
@@ -75,7 +75,20 @@ def ingest_all(pdf_list: List[Path], processed_root: Path) -> List[ParseResult]:
 def load_md_documents(processed_root: Path):
     docs = []
     for md in processed_root.rglob("*.md"):
-        docs.extend(TextLoader(str(md), encoding="utf-8").load())
+        loaded = TextLoader(str(md), encoding="utf-8").load()
+
+        # Derivar metadata útil desde la ruta: data/processed/<Make>/<Model>/archivo.md
+        rel = md.relative_to(processed_root)
+        parts = rel.parts
+        make = parts[0] if len(parts) >= 1 else "unknown"
+        model = parts[1] if len(parts) >= 2 else "unknown"
+
+        for d in loaded:
+            d.metadata = d.metadata or {}
+            d.metadata["make"] = make
+            d.metadata["model"] = model
+            d.metadata["source_rel"] = str(rel)
+        docs.extend(loaded)
     return docs
 
 def main():
@@ -93,8 +106,30 @@ def main():
 
     # Indexar
     docs = load_md_documents(PROCESSED_DIR)
-    splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=130)
-    chunks = splitter.split_documents(docs)
+
+    # 1) Split por headers Markdown (mantiene secciones como 'ESPECIFICACIONES', 'MOTOR', etc.)
+    header_splitter = MarkdownHeaderTextSplitter(
+        headers_to_split_on=[
+            ("#", "h1"),
+            ("##", "h2"),
+            ("###", "h3"),
+            ("####", "h4"),
+        ]
+    )
+
+    header_docs = []
+    for d in docs:
+        parts = header_splitter.split_text(d.page_content)
+        # heredar metadata del documento original
+        for p in parts:
+            p.metadata = p.metadata or {}
+            p.metadata.update(d.metadata)
+        header_docs.extend(parts)
+
+    # 2) Split recursivo para limitar tamaño por chunk (útil para embeddings/retrieval)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=450, chunk_overlap=120)
+    chunks = splitter.split_documents(header_docs)
+    print(f"Docs MD: {len(docs)} | Header-docs: {len(header_docs)} | Chunks: {len(chunks)}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     embeddings = HuggingFaceEmbeddings(

@@ -63,7 +63,7 @@ class RAG:
             model_kwargs={"device": self.device}
         )
 
-        # Cargar Chroma persistido
+        # Cargar Chroma pers
         # Nota: según versión, el parámetro puede ser embedding_function o embedding.
         # Este es el más común en langchain-community:
         self.vector_db = Chroma(
