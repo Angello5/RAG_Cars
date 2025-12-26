@@ -1,0 +1,28 @@
+# requirements.txt
+pydantic
+langchain
+langchain-core
+langchain-text-splitters
+langchain-community
+langchain-huggingface
+langchain-ollama
+docling
+FlagEmbedding
+
+# Hugging Face / model infra
+transformers
+huggingface-hub
+accelerate
+sentence-transformers
+
+# Embedding & vector DB
+chromadb
+
+# Retrieval utilities
+rank_bm25
+
+# Deep learning (PyTorch). For GPU installs, install per https://pytorch.org
+torch
+
+# Utilities
+tqdm
